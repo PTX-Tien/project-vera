@@ -1,27 +1,29 @@
 import logging
+import os  # <--- NEW IMPORT
+import sqlite3
 from typing import Annotated
 from typing_extensions import TypedDict
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.checkpoint.sqlite import SqliteSaver # Memory
 
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from langchain_tavily import TavilySearch
 from langchain_core.messages import SystemMessage, AIMessage, trim_messages
-import sqlite3
-from langgraph.checkpoint.sqlite import SqliteSaver # <--- NEW IMPORT
 
-from budget import global_budget
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vera_agent")
+
+from budget import global_budget 
 
 # Define State
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
 
-# --- OPTIMIZED SYSTEM PROMPT (Short & Strict for 8B Model) ---
+# --- SYSTEM PROMPT ---
 VERA_SYSTEM_PROMPT = SystemMessage(content="""
 You are Vera, an AI built by tienptx.
 
@@ -40,13 +42,12 @@ RULES:
    - Specific data comparisons.
 """)
 
-def get_vera_graph(model_name: str = "meta/llama-3.3-70b-instruct"):
+def get_vera_graph(model_name: str = "meta/llama-3.1-8b-instruct"):
     
-    # --- SURVIVAL MECHANISM 1: MEMORY MANAGEMENT ---
+    # --- MEMORY MANAGEMENT ---
     def trim_history(messages):
         return trim_messages(
             messages,
-            # Keep last 10 messages (safe limit)
             max_tokens=10, 
             strategy="last",
             token_counter=len, 
@@ -56,7 +57,6 @@ def get_vera_graph(model_name: str = "meta/llama-3.3-70b-instruct"):
         )
 
     # --- 1. Tools ---
-    # FIX: Reduce results to 1 to prevent timeout crashes
     tool = TavilySearch(
         max_results=1, 
         topic="general"
@@ -65,10 +65,9 @@ def get_vera_graph(model_name: str = "meta/llama-3.3-70b-instruct"):
     tool_node = ToolNode(tools)
 
     # --- 2. Model ---
-    # FIX: Add timeout=60 to prevent connection drops on slow networks
     llm = ChatNVIDIA(
         model=model_name, 
-        temperature=0.5,
+        temperature=0.5
     ) 
     llm_with_tools = llm.bind_tools(tools)
 
@@ -76,7 +75,7 @@ def get_vera_graph(model_name: str = "meta/llama-3.3-70b-instruct"):
     def reasoning_node(state: AgentState):
         messages = state["messages"]
         
-        # --- GUARDRAIL 1: DENIAL OF WALLET CHECK ---
+        # Guardrail: Budget Check
         if not global_budget.check_budget():
             return {
                 "messages": [
@@ -84,18 +83,15 @@ def get_vera_graph(model_name: str = "meta/llama-3.3-70b-instruct"):
                 ]
             }
 
-        # Inject System Prompt logic (keep your existing code here)
+        # Inject System Prompt
         if not isinstance(messages[0], SystemMessage):
             messages = [VERA_SYSTEM_PROMPT] + messages
 
         try:
             trimmed_messages = trim_history(messages)
-            
-            # Invoke Model
             response = llm_with_tools.invoke(trimmed_messages)
             
-            # --- GUARDRAIL 2: UPDATE THE BILL ---
-            # We grab the metadata from the raw response to count costs
+            # Guardrail: Cost Update
             global_budget.update_cost(response.response_metadata)
             
             return {"messages": [response]}
@@ -108,23 +104,24 @@ def get_vera_graph(model_name: str = "meta/llama-3.3-70b-instruct"):
                 ]
             }
 
-    # --- 4. Graph Construction with MEMORY ---
+    # --- 4. Graph Construction ---
     builder = StateGraph(AgentState)
     builder.add_node("agent", reasoning_node)
     builder.add_node("tools", tool_node)
+    
     builder.add_edge(START, "agent")
     builder.add_conditional_edges("agent", tools_condition)
     builder.add_edge("tools", "agent")
     
-    # --- NEW: SETUP DATABASE CONNECTION ---
-    # We verify if the DB file exists, if not it creates it.
-    
-    # check_same_thread=False is needed for Streamlit's multi-threading
-    #conn = sqlite3.connect("vera_memory.sqlite", check_same_thread=False)
-    
-    # Use absolute path inside the container
-    conn = sqlite3.connect("/app/vera_memory.sqlite", check_same_thread=False)
+    # --- FIX: DYNAMIC DATABASE PATH ---
+    # If /app exists, we are in Docker -> Use absolute path
+    # If not, we are in CI/Local -> Use relative path
+    if os.path.exists("/app"):
+        db_path = "/app/vera_memory.sqlite"
+    else:
+        db_path = "vera_memory.sqlite"
+
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     memory = SqliteSaver(conn)
 
-    # Compile the graph WITH the memory checkpointer
     return builder.compile(checkpointer=memory)
