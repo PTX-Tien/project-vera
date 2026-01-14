@@ -19,7 +19,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 5. Copy Source Code
 # We copy the 'src' folder into '/app/src'
-COPY src/ ./src
+#COPY src/ ./src
+COPY . .
 
 # 6. Expose the Streamlit Port
 EXPOSE 8501

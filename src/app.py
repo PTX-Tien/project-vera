@@ -1,3 +1,6 @@
+import shutil # Add this import at the top
+from rag_engine import process_document # Add this import
+
 import streamlit as st
 import os
 from dotenv import load_dotenv
@@ -15,6 +18,23 @@ st.set_page_config(page_title="Project Vera", layout="wide")
 with st.sidebar:
     st.title("⚙️ Control Panel")
     
+    # --- NEW: FILE UPLOADER ---
+    st.subheader("📁 Knowledge Base")
+    uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
+    
+    if uploaded_file is not None:
+        # Save file locally so PyPDFLoader can read it
+        save_path = f"/tmp/{uploaded_file.name}"
+        with open(save_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        
+        # Process the file (only do it once per file to save time)
+        if "last_uploaded" not in st.session_state or st.session_state.last_uploaded != uploaded_file.name:
+            with st.spinner("Processing document..."):
+                process_document(save_path)
+                st.session_state.last_uploaded = uploaded_file.name
+                st.success("Document Index Ready! 🧠")
+
     st.divider()
     st.subheader("💳 Token Budget")
     

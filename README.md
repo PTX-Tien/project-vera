@@ -63,6 +63,11 @@ graph TD
   - Token budget accounting
   - Database path integrity
 
+### 📄 Document Analysis (RAG)
+- **On-Demand Retrieval**: Users can upload PDF documents (Resumes, Papers, Contracts).
+- **Hybrid Reasoning**: The agent autonomously decides whether to answer from **Memory**, **Web Search**, or the **Uploaded File**.
+- **Vector Search**: Uses **FAISS** and **HuggingFace Embeddings** for semantic search within documents.
+
 ## 🛠️ Installation & Setup
 
 ### Prerequisites

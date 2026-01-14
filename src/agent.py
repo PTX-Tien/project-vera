@@ -13,6 +13,8 @@ from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from langchain_tavily import TavilySearch
 from langchain_core.messages import SystemMessage, AIMessage, trim_messages
 
+from rag_engine import lookup_document
+
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vera_agent")
@@ -37,9 +39,15 @@ RULES:
 3. IF input is gibberish, random letters (e.g. 'asdf', 'jkl'), or unclear:
    -> STATE "I do not understand." DO NOT USE TOOLS.
 
-4. ONLY use search for:
-   - News after 2024.
-   - Specific data comparisons.
+4. **DOCUMENT QUERIES**:
+   - IF the user asks about a "PDF", "resume", "CV", "document", or "paper":
+   - -> YOU MUST USE the 'lookup_document' tool.
+   - DO NOT say "I do not understand" if a file context is implied.
+
+5. **WEB SEARCH**:
+   - USE 'tavily_search_results_json' ONLY for:
+     - News after 2024.
+     - Specific data comparisons not found in the document.
 """)
 
 def get_vera_graph(model_name: str = "meta/llama-3.1-8b-instruct"):
@@ -57,11 +65,16 @@ def get_vera_graph(model_name: str = "meta/llama-3.1-8b-instruct"):
         )
 
     # --- 1. Tools ---
-    tool = TavilySearch(
+    # Primary Web Search Tool
+    tavily_tool = TavilySearch(
         max_results=1, 
         topic="general"
     )
-    tools = [tool]
+    
+    # RAG Tool (Document Search)
+    # We add lookup_document to the list so Vera can choose between Web or PDF
+    tools = [tavily_tool, lookup_document]
+    
     tool_node = ToolNode(tools)
 
     # --- 2. Model ---
@@ -69,6 +82,7 @@ def get_vera_graph(model_name: str = "meta/llama-3.1-8b-instruct"):
         model=model_name, 
         temperature=0.5
     ) 
+    # Bind the FULL list of tools (Web + RAG)
     llm_with_tools = llm.bind_tools(tools)
 
     # --- 3. Reasoning Node ---
