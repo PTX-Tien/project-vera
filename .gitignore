@@ -1,0 +1,6 @@
+.env
+vera_memory.sqlite
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+vera_memory.sqlite-journal

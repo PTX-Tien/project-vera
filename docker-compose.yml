@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  vera-agent:
+    build: .
+    container_name: project-vera
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      # 1. Hot Reloading Code
+      - ./src:/app/src
+      # 2. PERSISTENT MEMORY (The Magic Line)
+      # This maps the SQLite file inside the container to a file on your server
+      - ./vera_memory.sqlite:/app/vera_memory.sqlite
+    restart: unless-stopped
