@@ -1,56 +1,47 @@
 import logging
-import os  # <--- NEW IMPORT
-import sqlite3
+import uuid
+import re  # <--- NEW IMPORT
 from typing import Annotated
 from typing_extensions import TypedDict
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
-from langgraph.checkpoint.sqlite import SqliteSaver # Memory
 
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from langchain_tavily import TavilySearch
 from langchain_core.messages import SystemMessage, AIMessage, trim_messages
 
-from rag_engine import lookup_document
+from rag_engine import lookup_document, is_document_uploaded 
+from budget import global_budget 
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vera_agent")
 
-from budget import global_budget 
-
 # Define State
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
 
-# --- SYSTEM PROMPT ---
-VERA_SYSTEM_PROMPT = SystemMessage(content="""
-You are Vera, an AI built by tienptx.
-
+# --- SYSTEM PROMPTS ---
+PROMPT_WITH_DOC = SystemMessage(content="""
+You are Vera, an AI Research Agent.
+A PDF document is currently uploaded.
 RULES:
-1. IF asked 'Who are you?', 'Who built you?', or 'Hello':
-   -> ANSWER DIRECTLY. DO NOT USE TOOLS.
-   
-2. IF asked '2+2', 'Capital of France':
-   -> ANSWER DIRECTLY. DO NOT USE TOOLS.
-
-3. IF input is gibberish, random letters (e.g. 'asdf', 'jkl'), or unclear:
-   -> STATE "I do not understand." DO NOT USE TOOLS.
-
-4. **DOCUMENT QUERIES**:
-   - IF the user asks about a "PDF", "resume", "CV", "document", or "paper":
-   - -> YOU MUST USE the 'lookup_document' tool.
-   - DO NOT say "I do not understand" if a file context is implied.
-
-5. **WEB SEARCH**:
-   - USE 'tavily_search_results_json' ONLY for:
-     - News after 2024.
-     - Specific data comparisons not found in the document.
+1. If the user asks about the document/candidate -> USE 'lookup_document'.
+2. If the user shares personal info ("My name is...") -> Just remember it. DO NOT search.
 """)
 
-def get_vera_graph(model_name: str = "meta/llama-3.1-8b-instruct"):
+PROMPT_NO_DOC = SystemMessage(content="""
+You are Vera, an AI Research Agent.
+NO document is currently uploaded.
+RULES:
+1. Answer general questions directly.
+2. If the user shares personal info ("My name is...") -> Just remember it. DO NOT search.
+3. If the user asks to "summarize" or "search the file", politely reply: "Please upload a document first."
+""")
+
+def get_vera_graph(model_name: str = "meta/llama-3.1-8b-instruct", memory=None):
     
     # --- MEMORY MANAGEMENT ---
     def trim_history(messages):
@@ -65,77 +56,104 @@ def get_vera_graph(model_name: str = "meta/llama-3.1-8b-instruct"):
         )
 
     # --- 1. Tools ---
-    # Primary Web Search Tool
-    tavily_tool = TavilySearch(
-        max_results=1, 
-        topic="general"
-    )
-    
-    # RAG Tool (Document Search)
-    # We add lookup_document to the list so Vera can choose between Web or PDF
-    tools = [tavily_tool, lookup_document]
-    
-    tool_node = ToolNode(tools)
+    tavily_tool = TavilySearch(max_results=1, topic="general")
+    tools_all = [tavily_tool, lookup_document] 
+    tools_web_only = [tavily_tool]             
+    tool_node = ToolNode(tools_all)
 
     # --- 2. Model ---
-    llm = ChatNVIDIA(
-        model=model_name, 
-        temperature=0.5
-    ) 
-    # Bind the FULL list of tools (Web + RAG)
-    llm_with_tools = llm.bind_tools(tools)
+    llm = ChatNVIDIA(model=model_name, temperature=0.5) 
 
-    # --- 3. Reasoning Node ---
+    # --- 3. Reasoning Node (The Brain) ---
     def reasoning_node(state: AgentState):
         messages = state["messages"]
         
         # Guardrail: Budget Check
         if not global_budget.check_budget():
-            return {
-                "messages": [
-                    AIMessage(content="🛑 **SYSTEM HALT**: Daily Token Budget Exceeded. Please check the dashboard.")
-                ]
-            }
+            return {"messages": [AIMessage(content="🛑 **SYSTEM HALT**: Daily Token Budget Exceeded.")]}
 
-        # Inject System Prompt
-        if not isinstance(messages[0], SystemMessage):
-            messages = [VERA_SYSTEM_PROMPT] + messages
+        # --- DYNAMIC LOGIC START ---
+        has_doc = is_document_uploaded()
+        
+        # 1. Select Prompt
+        current_prompt = PROMPT_WITH_DOC if has_doc else PROMPT_NO_DOC
+        if isinstance(messages[0], SystemMessage):
+            messages[0] = current_prompt 
+        else:
+            messages = [current_prompt] + messages 
+
+        # 2. INTELLIGENT FILTERS
+        last_msg_text = messages[-1].content.lower().strip()
+        
+        # Filter A: Chitchat (Greetings)
+        chitchat_triggers = ["hello", "hi", "hey", "hola", "greetings", "good morning", "who are you"]
+        is_chitchat = any(last_msg_text.startswith(t) for t in chitchat_triggers) and len(last_msg_text) < 20
+
+        # Filter B: Personal Info (My name is...) - NEW!
+        # If user says "My name is X", we disable tools so it DOES NOT search.
+        personal_patterns = [
+            r"my name is",
+            r"i am",
+            r"call me",
+            r"i'm",
+            r"my email is"
+        ]
+        is_personal = any(re.search(p, last_msg_text) for p in personal_patterns)
+
+        # 3. Bind Tools Accordingly
+        if is_chitchat or is_personal:
+            # FORCE: Pure LLM response (No Search)
+            llm_active = llm
+        elif has_doc:
+            # PDF Mode: RAG + Web
+            llm_active = llm.bind_tools(tools_all)
+        else:
+            # Web Mode: Web only
+            llm_active = llm.bind_tools(tools_web_only)
+        # ----------------------------
 
         try:
             trimmed_messages = trim_history(messages)
-            response = llm_with_tools.invoke(trimmed_messages)
-            
-            # Guardrail: Cost Update
+            response = llm_active.invoke(trimmed_messages)
             global_budget.update_cost(response.response_metadata)
-            
             return {"messages": [response]}
             
         except Exception as e:
             logger.error(f"LLM Call Failed: {e}")
-            return {
-                "messages": [
-                    AIMessage(content="⚠️ System Error. Please retry.")
-                ]
-            }
+            return {"messages": [AIMessage(content=f"⚠️ System Error: {str(e)}")]}
 
-    # --- 4. Graph Construction ---
+    # --- 4. Fast Path Optimization ---
+    def route_start(state: AgentState):
+        last_msg = state["messages"][-1].content.lower()
+        fast_keywords = ["pdf", "resume", "cv", "document", "file", "candidate", "skills"]
+        
+        if is_document_uploaded() and any(k in last_msg for k in fast_keywords):
+            return "fast_doc_trigger"
+        
+        return "agent"
+
+    def fast_doc_trigger(state: AgentState):
+        last_user_msg = state["messages"][-1].content
+        tool_call_id = str(uuid.uuid4())
+        fast_tool_msg = AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "lookup_document",
+                "args": {"query": last_user_msg},
+                "id": tool_call_id
+            }]
+        )
+        return {"messages": [fast_tool_msg]}
+
+    # --- 5. Graph Construction ---
     builder = StateGraph(AgentState)
     builder.add_node("agent", reasoning_node)
     builder.add_node("tools", tool_node)
+    builder.add_node("fast_doc_trigger", fast_doc_trigger)
     
-    builder.add_edge(START, "agent")
+    builder.add_conditional_edges(START, route_start, {"fast_doc_trigger": "fast_doc_trigger", "agent": "agent"})
+    builder.add_edge("fast_doc_trigger", "tools")
     builder.add_conditional_edges("agent", tools_condition)
     builder.add_edge("tools", "agent")
     
-    # --- FIX: DYNAMIC DATABASE PATH ---
-    # If /app exists, we are in Docker -> Use absolute path
-    # If not, we are in CI/Local -> Use relative path
-    if os.path.exists("/app"):
-        db_path = "/app/vera_memory.sqlite"
-    else:
-        db_path = "vera_memory.sqlite"
-
-    conn = sqlite3.connect(db_path, check_same_thread=False)
-    memory = SqliteSaver(conn)
-
     return builder.compile(checkpointer=memory)

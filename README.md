@@ -1,35 +1,39 @@
-# Project Vera 🧬
+# 🧬 Project Vera: AI Research Agent
 
 ![Build Status](https://github.com/PTX-Tien/project-vera/actions/workflows/ci_pipeline.yml/badge.svg)
 ![Python](https://img.shields.io/badge/Python-3.10-blue)
-![Docker](https://img.shields.io/badge/Docker-Containerized-2496ED)
-![Framework](https://img.shields.io/badge/AI-LangGraph-orange)
+![Frontend](https://img.shields.io/badge/Next.js-14-black)
+![Backend](https://img.shields.io/badge/FastAPI-0.109-009485)
+![AI](https://img.shields.io/badge/LangGraph-Stateful-orange)
 
-**Project Vera** is a production-grade, stateful AI Research Agent designed for autonomous web synthesis, budget-aware reasoning, and long-term memory retention.  
-It is built using **NVIDIA NIM**, **LangGraph**, **Docker**, and modern MLOps best practices.
+**Project Vera** is a production-grade, Full-Stack AI Research Agent capable of document analysis, web synthesis, and context-aware reasoning.
+
+It features a **Hybrid Architecture** that combines Neural AI (Llama 3) with Symbolic Logic (LangGraph) to dynamically switch between **RAG (Document Search)**, **Web Research**, and **Instant Chitchat** modes for optimal performance and cost efficiency.
 
 ---
 
 ## 🏗️ Architecture
 
-The system follows a **microservice architecture** that cleanly separates **stateless compute** (Docker containers) from **persistent state** (SQLite volume).
+The system follows a **Client-Server architecture** separating the React-based frontend from the Async Python backend.
 
 ```mermaid
 graph TD
-    User(["👤 User"]) -->|Chat Input| UI["Streamlit UI"]
-    UI -->|Stream Events| Graph{"LangGraph Orchestrator"}
+    User(["👤 User"]) -->|Chat & Uploads| UI["💻 Next.js Frontend (Port 3000)"]
+    UI -->|JSON / Streams| API["🚀 FastAPI Backend (Port 8000)"]
     
-    subgraph Docker ["Docker Container"]
-        Graph -->|Decide| Agent["🧠 Llama 3 8B (NVIDIA NIM)"]
-        Graph -->|Search| Tools["🔎 Tavily Search API"]
-        Graph -->|Check| Budget["💳 Budget Guardrail"]
+    subgraph "Backend Core"
+        API -->|Route| Graph{"LangGraph Orchestrator"}
+        
+        Graph -->|General Chat| Chitchat["⚡ Instant Reply (No Cost)"]
+        Graph -->|Document Query| RAG["📄 FAISS + PDF Search"]
+        Graph -->|Complex Query| Agent["🧠 Llama 3 8B (NVIDIA NIM)"]
+        
+        Agent -->|Web Search| Tools["🔎 Tavily Search API"]
     end
     
-    subgraph Storage ["Persistent Storage"]
-        Graph <-->|Read / Write| DB[("SQLite Memory")]
+    subgraph "State Management"
+        Graph <-->|Read / Write| Memory[("📝 Session Memory")]
     end
-    
-    Agent -->|Response| UI
 ```
 
 ---
@@ -38,24 +42,23 @@ graph TD
 
 ### 🧠 Logic & Reasoning
 - Powered by **Meta Llama 3 (8B)** via optimized **NVIDIA NIM** endpoints.
-- LangGraph-driven control flow ensures **deterministic**, **auditable**, and **debuggable** agent behavior.
 
-### 💾 Long-Term Memory
-- **SQLite-based persistence** enables the agent to retain user context across:
-  - Sessions
-  - Container restarts
-  - CI/CD environments
+- **Intelligent Routing**: Dynamically switches between retrieval, search, and conversation modes.
+
+- LangGraph-driven control flow ensures **deterministic** and **debuggable** agent behavior.
+
+### 💾 Stateful Memory
+- **Session Persistence**: Retains user context and personal details (e.g., names, facts) throughout the active session using robust in-memory checkpointing.
+
+- **Thread Management**: Unique thread IDs ensure conversation isolation for multiple users.
 
 ### 🛡️ Production Guardrails
-- **Budget Circuit Breaker**  
-  Automatically halts execution when daily token limits are exceeded.
-- **Anti-Loop Protection**  
-  Enforces recursion limits to prevent runaway or zombie agent loops.
-- **Safety Filter**  
-  Strict system prompts prevent hallucinated or unnecessary web searches.
+- **Budget Circuit Breaker**: Automatically halts execution when daily token limits are exceeded.
+
+- **Hallucination Filters**: Regex-based safety logic prevents the agent from performing unnecessary web searches for personal statements.
 
 ### 🐳 Fully Containerized
-- Runs identically across **Development**, **CI**, and **Production** using Docker and Docker Compose.
+- Backend is fully Dockerized for consistent deployment across **Development**, **CI**, and **Production** environments.
 
 ### ✅ CI/CD Pipeline
 - GitHub Actions automatically validate:
@@ -64,50 +67,68 @@ graph TD
   - Database path integrity
 
 ### 📄 Document Analysis (RAG)
-- **On-Demand Retrieval**: Users can upload PDF documents (Resumes, Papers, Contracts).
-- **Hybrid Reasoning**: The agent autonomously decides whether to answer from **Memory**, **Web Search**, or the **Uploaded File**.
-- **Vector Search**: Uses **FAISS** and **HuggingFace Embeddings** for semantic search within documents.
+- **Drag-and-Drop**: Upload PDF resumes, research papers, or contracts directly via the UI.
 
-## 🛠️ Installation & Setup
+- **Local Embeddings**: Uses HuggingFaceEmbeddings and FAISS for fast, secure, CPU-optimized vector search.
+
+- **Context Awareness**: The agent automatically detects if a file is uploaded and adjusts its system prompts accordingly.
+
+## 🛠️ Tech Stack
+- **Brain**: Llama 3 (via NVIDIA NIM)
+
+- **Orchestration**: LangChain + LangGraph
+
+- **Backend**: FastAPI (Async Python)
+
+- **Frontend**: Next.js 14, Tailwind CSS, Lucide React
+
+- **Vector DB**: FAISS (Local)
+
+## 💻 Installation & Setup
 
 ### Prerequisites
-* **Docker** & **Docker Compose** installed on your machine.
+* **Python 3.10+** and **Node.js 18+** installed.
+* **Docker** & **Docker Compose** installed.
 * API Keys for **NVIDIA NIM** (LLM) and **Tavily Search** (Web Browsing).
 
-### Option A: Run with Docker (Recommended)
+### Option A: Hybrid Run (Docker Backend + Local Frontend)
 
-1.  **Clone the repository**
+1.  **Start the Backend (Docker)**
     ```bash
-    git clone [https://github.com/PTX-Tien/project-vera.git](https://github.com/PTX-Tien/project-vera.git)
+    # Clone repository
+    git clone https://github.com/PTX-Tien/project-vera.git
     cd project-vera
-    ```
 
-2.  **Configure Environment**
-    Create a `.env` file in the root directory and add your keys:
-    ```ini
-    NVIDIA_API_KEY=nvapi-...
-    TAVILY_API_KEY=tvly-...
-    ```
+    # Create .env file
+    echo "NVIDIA_API_KEY=nvapi-..." > .env
+    echo "TAVILY_API_KEY=tvly-..." >> .env
 
-3.  **Build & Launch**
-    ```bash
+    # Build and Run Container
     docker-compose up --build
     ```
-    > Access the app at **[http://localhost:8501](http://localhost:8501)**
+    > Backend will be live at **[http://localhost:8000/](http://localhost:8000/)**
 
-### Option B: Local Development
-
-1.  **Install Dependencies**
+2.  **Start the Frontend (Local) Open a new terminal:**
+    Create a `.env` file in the root directory and add your keys:
     ```bash
+    cd vera-frontend
+    npm install
+    npm run dev
+    ```
+    > Access the app at **[http://localhost:3000/](http://localhost:3000/)**
+
+### Option B: Full Local Development
+
+1.  **Backend**
+    ```bash
+    cd project-vera
     pip install -r requirements.txt
+    PYTHONPATH=src uvicorn api:app --reload --host 0.0.0.0 --port 8000
     ```
-2.  **Run the App**
+2.  **Frontend**
     ```bash
-    streamlit run src/app.py
-    ```
-3.  **Run Tests**
-    ```bash
-    python tests/test_agent.py
+    cd vera-frontend
+    npm run dev
     ```
 
 ---
@@ -116,12 +137,15 @@ graph TD
 
 ```text
 project-vera/
-├── .github/workflows/    # 🤖 CI/CD Pipelines (GitHub Actions)
+├── .github/workflows/    # 🤖 CI/CD Pipelines
 ├── src/
 │   ├── agent.py          # 🧠 LangGraph Logic & Memory
-│   ├── app.py            # 🖥️ Streamlit UI & Thread Management
+│   ├── api.py            # 🚀 FastAPI Endpoints & Lifespan Manager
+│   ├── rag_engine.py     # 📄 FAISS Vector Store & PDF Processing
 │   └── budget.py         # 💳 Token Counting & Budget Logic
-├── tests/                # 🧪 Integration Tests
+├── vera-frontend/        # 💻 Next.js Client Code
+│   ├── src/app/page.tsx  # ⚛️ Chat UI & State Logic
+│   └── tailwind.config.ts
 ├── docker-compose.yml    # 🐳 Infrastructure as Code
 ├── Dockerfile            # 📦 Container Definition
 └── requirements.txt      # 🐍 Python Dependencies

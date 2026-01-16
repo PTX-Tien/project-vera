@@ -2,8 +2,9 @@ import os
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.tools import tool
+# --- CHANGED IMPORT TO FIX WARNING ---
+from langchain_huggingface import HuggingFaceEmbeddings 
+from langchain_core.tools import tool
 
 # Global variable to store the retriever instance temporarily
 CURRENT_RETRIEVER = None
@@ -49,3 +50,8 @@ def lookup_document(query: str):
     
     # Combine chunks into a single string context
     return "\n\n".join([doc.page_content for doc in docs])
+
+# --- ADD THIS FUNCTION AT THE END ---
+def is_document_uploaded():
+    """Returns True if a document is currently loaded in memory."""
+    return CURRENT_RETRIEVER is not None

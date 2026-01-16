@@ -1,34 +1,39 @@
-# 1. Base Image: Use a lightweight Python version (same as your conda env)
+# 1. Base Image
 FROM python:3.10-slim
 
-# 2. Set Environment Variables
-# PYTHONDONTWRITEBYTECODE: Prevents Python from writing .pyc files
-# PYTHONUNBUFFERED: Ensures logs appear immediately (crucial for Streamlit)
-# PYTHONPATH: Tells Python to look inside /app/src for modules (Fixes import errors)
+# 2. System Dependencies
+# libgomp1 is CRITICAL for FAISS (Vector DB) to work on slim images
+# curl is needed for the HEALTHCHECK command
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libgomp1 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 3. Environment Variables
+# PYTHONPATH="/app/src" allows us to run "uvicorn api:app" directly
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH="/app/src"
 
-# 3. Set Working Directory
+# 4. Set Working Directory
 WORKDIR /app
 
-# 4. Install Dependencies
-# We copy requirements first to leverage Docker Cache (builds faster)
+# 5. Install Python Dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 5. Copy Source Code
-# We copy the 'src' folder into '/app/src'
-#COPY src/ ./src
+# 6. Copy Source Code
 COPY . .
 
-# 6. Expose the Streamlit Port
-EXPOSE 8501
+# 7. Expose FastAPI Port
+EXPOSE 8000
 
-# 7. Healthcheck (MLOps Best Practice)
-# Checks if the app is actually running every 30s
-HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health || exit 1
+# 8. Healthcheck
+# Hits the /health endpoint we created in api.py
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD curl --fail http://localhost:8000/health || exit 1
 
-# 8. Run the App
-# Streamlit handles the 'src/app.py' path because we are in /app
-CMD ["streamlit", "run", "src/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# 9. Start the Server
+# We use 'api:app' because /app/src is in the PYTHONPATH
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]

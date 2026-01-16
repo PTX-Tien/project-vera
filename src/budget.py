@@ -4,7 +4,7 @@ from typing import Dict, Any
 logger = logging.getLogger("vera_budget")
 
 class BudgetManager:
-    def __init__(self, max_daily_tokens: int = 50000):
+    def __init__(self, max_daily_tokens: int = 500000):
         self.limit = max_daily_tokens
         self.used = 0
         self.requests = 0

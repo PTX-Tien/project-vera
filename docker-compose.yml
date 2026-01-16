@@ -1,17 +1,24 @@
 version: '3.8'
 
 services:
-  vera-agent:
-    build: .
-    container_name: project-vera
+  # 🧠 The Python Backend (FastAPI)
+  backend:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: vera_backend
     ports:
-      - "8501:8501"
+      # CHANGED: Map host port 8000 to container port 8000
+      - "8000:8000"
     env_file:
       - .env
     volumes:
-      # 1. Hot Reloading Code
+      # 1. Hot Reloading: Maps your local 'src' folder to the container
+      # This allows you to change Python code without rebuilding Docker!
       - ./src:/app/src
-      # 2. PERSISTENT MEMORY (The Magic Line)
-      # This maps the SQLite file inside the container to a file on your server
-      - ./vera_memory.sqlite:/app/vera_memory.sqlite
+      
+      # 2. OPTIONAL: If you switch back to SQLite later, uncomment this line.
+      # For now, since we use 'MemorySaver' (RAM), we don't need a file map.
+      # - ./vera_memory.sqlite:/app/vera_memory.sqlite
+    
     restart: unless-stopped
